@@ -1,41 +1,41 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: openstack-appcred-"${{ .Values.appCred.cluster_name }}"
+  name: openstack-appcred-"{{ .Values.appCred.cluster_name }}"
   namespace: ${{ .Values.appCred.cluster_name }}
 spec:
   # Auto-delete the Job (and its Pods) 10 minutes after it finishes
   ttlSecondsAfterFinished: 600
   template:
     metadata:
-      name: openstack-appcred-job"${{ .Values.appCred.cluster_name }}"
+      name: openstack-appcred-job"{{ .Values.appCred.cluster_name }}"
     spec:
       serviceAccountName: appcreds-writer
       restartPolicy: OnFailure
       containers:
         - name: writer
-          image: "${{ .Values.image.repository }}"
+          image: "{{ .Values.image.repository }}"
           imagePullPolicy: IfNotPresent
           env:
             # Select cloud entry from clouds.yaml
             - name: OS_CLOUD
-              value: "${{ .Values.os_cloud }}"
+              value: "{{ .Values.os_cloud }}"
 
             # App credential creation settings
             - name: APP_CRED_NAME
-              value: "${{ .Values.appCred.name }}"
+              value: "{{ .Values.appCred.name }}"
             - name: APP_CRED_ROLES
-              value: "${{ .Values.appCred.roles }}"
+              value: "{{ .Values.appCred.roles }}"
             - name: APP_CRED_EXPIRES_IN
-              value: "${{ .Values.appCred.expiry }}"
+              value: "{{ .Values.appCred.expiry }}"
             - name: APP_CRED_DESCRIPTION
-              value: "${{ .Values.appCred.description }}"
+              value: "{{ .Values.appCred.description }}"
             - name: APP_CRED_UNRESTRICTED
-              value: "${{ .Values.appCred.unrestricted }}"
+              value: "{{ .Values.appCred.unrestricted }}"
 
             # Secret output config
             - name: OUTPUT_SECRET_NAME
-              value: "${{ .Values.appCred.cluster_name }}"
+              value: "{{ .Values.appCred.cluster_name }}"
             - name: OUTPUT_SECRET_NAMESPACE
               valueFrom:
                 fieldRef:
