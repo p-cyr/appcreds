@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openstack-appcred-job
+  namespace: my-namespace
+spec:
+  # Auto-delete the Job (and its Pods) 10 minutes after it finishes
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      name: openstack-appcred-job
+    spec:
+      serviceAccountName: appcreds-writer
+      restartPolicy: OnFailure
+      containers:
+        - name: writer
+          image: ghcr.io/YOURORG/openstack-appcred:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            # Select cloud entry from clouds.yaml
+            - name: OS_CLOUD
+              value: "mycloud"
+
+            # App credential creation settings
+            - name: APP_CRED_NAME
+              value: "cicd-token"
+            - name: APP_CRED_ROLES
+              value: "member,reader"
+            - name: APP_CRED_EXPIRES_IN
+              value: "90d"
+            - name: APP_CRED_DESCRIPTION
+              value: "CICD token"
+            - name: APP_CRED_UNRESTRICTED
+              value: "false"
+
+            # Secret output config
+            - name: OUTPUT_SECRET_NAME
+              value: "openstack-appcred"
+            - name: OUTPUT_SECRET_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+          volumeMounts:
+            - name: clouds
+              mountPath: /etc/openstack
+              readOnly: true
+
+      volumes:
+        - name: clouds
+          secret:
+            secretName: openstack-clouds
