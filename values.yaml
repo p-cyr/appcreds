@@ -1,0 +1,11 @@
+image:
+  repository: pjcyr/openstack-appcred
+  tag: v1.1.0
+os_cloud: 
+appCred:
+  name: "cicd_test"
+  roles: "member,reader"
+  expiry: "90d"
+  description: "my cicd_test app cred test"
+  unrestricted: "false"
+  cluster_name: "my_secretname"

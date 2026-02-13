@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir \
       pyyaml
 
 WORKDIR /app
-COPY templates/cron_appcred_to_secret.py /app/cron_appcred_to_secret.py
+COPY cron_appcred_to_secret.py /app/cron_appcred_to_secret.py
 
 # Nonroot (optional)
 RUN useradd -r -u 10001 appuser
