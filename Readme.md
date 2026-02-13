@@ -1,6 +1,6 @@
 # from your repo root
-docker build -t ghcr.io/YOURORG/openstack-appcred:1.0.0 -f docker/Dockerfile .
-docker push ghcr.io/YOURORG/openstack-appcred:1.0.0
+docker build -t ghcr.io/p-cyr/openstack-appcred:1.0.0 -f docker/Dockerfile .
+docker push ghcr.io/p-cyr/openstack-appcred:1.0.0
 
 
 
