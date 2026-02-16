@@ -1,21 +1,39 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: openstack-appcred-"{{ .Values.appCred.cluster_name }}"
-  namespace: ${{ .Values.appCred.cluster_name }}
+  name: openstack-appcred-{{ .Values.appCred.cluster_name }}
+  namespace: {{ .Values.appCred.cluster_name }}
 spec:
   # Auto-delete the Job (and its Pods) 10 minutes after it finishes
   ttlSecondsAfterFinished: 600
   template:
     metadata:
-      name: openstack-appcred-job"{{ .Values.appCred.cluster_name }}"
+      name: openstack-appcred-job-{{ .Values.appCred.cluster_name }}
     spec:
       serviceAccountName: appcreds-writer
       restartPolicy: OnFailure
+
+      securityContext:
+        runAsNonRoot: true              # required by PSS:restricted
+        # If your image has a known non-root UID, set it explicitly (example):
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault          # required by PSS:restricted
+        # Optional but often recommended:
+        # fsGroup: 10001
+
       containers:
         - name: writer
           image: "{{ .Values.image.repository }}"
           imagePullPolicy: IfNotPresent
+
+          # ---------- Container-level securityContext ----------
+          securityContext:
+            allowPrivilegeEscalation: false          # required by PSS:restricted
+            capabilities:
+              drop: ["ALL"]                          # required by PSS:restricted
+            # Optional hardening:
+            # readOnlyRootFilesystem: true
           env:
             # Select cloud entry from clouds.yaml
             - name: OS_CLOUD
@@ -50,8 +68,18 @@ spec:
             - name: clouds
               mountPath: /etc/openstack
               readOnly: true
+            - name: custom-ca
+              mountPath: /etc/ssl/certs/ca.crt
+              subPath: ca.crt
+              readOnly: true
 
       volumes:
         - name: clouds
           secret:
             secretName: openstack-clouds
+        - name: custom-ca        
+          configMap:        
+            name: custom-ca-bundle        
+            items:        
+              - key: ca.crt
+                path: ca.crt
