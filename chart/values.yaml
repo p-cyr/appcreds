@@ -1,6 +1,6 @@
 image:
   repository: pjcyr/openstack-appcred
-  tag: v1.1.6
+  tag: v1.1.7
 os_cloud: 
 appCred:
   name: "cicd_test"

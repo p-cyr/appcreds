@@ -1,33 +1,44 @@
 #!/usr/bin/env python3
 """
-Create an OpenStack Application Credential from a clouds.yaml cloud and
-store the result (id + secret + metadata) in a Kubernetes Secret.
+Create an OpenStack Application Credential and upsert it into a Kubernetes Secret.
 
-Enhancements:
-- APP_CRED_NO_EXPIRY=true will ignore APP_CRED_EXPIRES_AT / APP_CRED_EXPIRES_IN
-  and create a non-expiring application credential.
+Key behaviors
+-------------
+- Optional expiry:
+  * Unset/empty or tokens like "none", "null", "false", "disabled", "off", "n/a", "never"
+    (case-insensitive) => **no expiry**.
+  * APP_CRED_EXPIRES_IN: duration such as 90d, 12h, 30m, or combos like 7d12h (strict).
+  * APP_CRED_EXPIRES_AT: absolute ISO8601 UTC timestamp (e.g., 2026-06-01T00:00:00Z).
+  * If both are set to meaningful values, the script fails fast with a clear error.
 
-Environment variables:
-  OS_CLOUD                    # cloud name from clouds.yaml
-  APP_CRED_NAME              # e.g., cicd-token
-  APP_CRED_ROLES             # CSV, e.g., member,reader
-  APP_CRED_DESCRIPTION       # optional
-  APP_CRED_EXPIRES_AT        # optional, ISO8601 UTC e.g. 2026-06-01T00:00:00Z
-  APP_CRED_EXPIRES_IN        # optional, e.g., 90d, 24h, 30m, 7d12h
-  APP_CRED_NO_EXPIRY         # optional, true|false; if true => no expiry
-  APP_CRED_SECRET            # optional, supply your own secret (otherwise server generates)
-  APP_CRED_UNRESTRICTED      # optional, true|false; defaults false
-  ACCESS_RULES_PATH          # optional, path to JSON/YAML list of access rules
+- Roles are passed as objects (e.g., [{"name": "member"}]) to satisfy Keystone schemas that
+  require role objects rather than strings.
 
-  OUTPUT_SECRET_NAME         # k8s Secret name to create/patch
-  OUTPUT_SECRET_NAMESPACE    # k8s namespace for Secret; defaults to POD_NAMESPACE
-  POD_NAMESPACE              # usually injected via fieldRef
+- Uses openstacksdk and requires 'user=conn.current_user_id' for app-cred create on many SDKs.
 
-Mounts:
-  /etc/openstack/clouds.yaml # clouds.yaml with the selected OS_CLOUD
-  (optional) custom CA via REQUESTS_CA_BUNDLE or verify in clouds.yaml if needed
+- Upserts a Kubernetes Secret using in-cluster config, **not** printing the secret to stdout.
+
+Environment
+-----------
+  OS_CLOUD                    -> cloud name in clouds.yaml
+  APP_CRED_NAME               -> application credential name (default: "cicd-token")
+  APP_CRED_ROLES              -> comma-separated role names, e.g. "member,reader" (optional)
+  APP_CRED_DESCRIPTION        -> optional text
+  APP_CRED_EXPIRES_IN         -> "90d", "12h", "30m", "7d12h", or "none"
+  APP_CRED_EXPIRES_AT         -> ISO8601 UTC, or "false" / "none"
+  APP_CRED_SECRET             -> optional custom secret (server generates if omitted)
+  APP_CRED_UNRESTRICTED       -> "true"/"false" (default false)
+  ACCESS_RULES_PATH           -> optional JSON or YAML file with access rules list
+
+  OUTPUT_SECRET_NAME          -> target Kubernetes Secret name (default: "openstack-appcred")
+  OUTPUT_SECRET_NAMESPACE     -> defaults to POD_NAMESPACE (or "default" if not set)
+  POD_NAMESPACE               -> injected from downward API (metadata.namespace)
+
+Notes
+-----
+- Mount your clouds.yaml (and optional CA) in the container. openstacksdk auto-discovers
+  /etc/openstack/clouds.yaml and honors OS_CLOUD.
 """
-
 import re, os, sys, json, argparse, datetime as dt
 from typing import Optional, List
 
@@ -55,17 +66,6 @@ except ImportError:
 NO_EXPIRY_TOKENS = {"none", "null", "false", "disabled", "off", "n/a", "never"}
 DURATION_RE = re.compile(r"^(?=.{2,50}$)(\d+[dhm])+$", re.IGNORECASE)
 # Examples: 90d, 12h, 30m, 7d12h, 10m30m (weird but acceptable). Adjust as you like.
-
-def is_no_expiry(val: Optional[str]) -> bool:
-    if val is None:
-        return True  # treat unset as "no expiry"
-    s = str(val).strip().lower()
-    return (not s) or (s in NO_EXPIRY_TOKENS)
-
-def is_duration(val: Optional[str]) -> bool:
-    if not val:
-        return False
-    return bool(DURATION_RE.match(val.strip()))
 
 
 def parse_bool(v: Optional[str]) -> bool:
@@ -98,27 +98,16 @@ def parse_duration_to_iso8601(expr: str) -> str:
         delta += dt.timedelta(hours=int(num))
     return (dt.datetime.utcnow() + delta).replace(microsecond=0).isoformat() + "Z"
 
+def is_no_expiry(val: Optional[str]) -> bool:
+    if val is None:
+        return True  # treat unset as "no expiry"
+    s = str(val).strip().lower()
+    return (not s) or (s in NO_EXPIRY_TOKENS)
 
-def load_access_rules(path: Optional[str]):
-    if not path:
-        return []
-    ext = os.path.splitext(path)[1].lower()
-    with open(path, "r", encoding="utf-8") as f:
-        data = f.read()
-    if ext in (".yaml", ".yml"):
-        if not HAS_YAML:
-            raise RuntimeError("PyYAML required for YAML access rules.")
-        rules = yaml.safe_load(data)
-    else:
-        rules = json.loads(data)
-    if not isinstance(rules, list):
-        raise ValueError("Access rules must be a list of rule objects.")
-    return rules
-
-
-def connect_openstack(cloud: Optional[str]):
-    # openstacksdk reads /etc/openstack/clouds.yaml & OS_CLOUD automatically
-    return openstack.connect(cloud=cloud)
+def is_duration(val: Optional[str]) -> bool:
+    if not val:
+        return False
+    return bool(DURATION_RE.match(val.strip()))
 
 def normalize_optional_expiry(env_expires_in: Optional[str], env_expires_at: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """
@@ -158,25 +147,49 @@ def normalize_optional_expiry(env_expires_in: Optional[str], env_expires_at: Opt
     # No expiry
     return (None, None, "none")
 
+def load_access_rules(path: Optional[str]):
+    if not path:
+        return []
+    ext = os.path.splitext(path)[1].lower()
+    with open(path, "r", encoding="utf-8") as f:
+        data = f.read()
+    if ext in (".yaml", ".yml"):
+        if not HAS_YAML:
+            raise RuntimeError("PyYAML required for YAML access rules.")
+        rules = yaml.safe_load(data)
+    else:
+        rules = json.loads(data)
+    if not isinstance(rules, list):
+        raise ValueError("Access rules must be a list of rule objects.")
+    return rules
+
+
+def connect_openstack(cloud: Optional[str]):
+    # openstacksdk reads /etc/openstack/clouds.yaml & OS_CLOUD automatically
+    return openstack.connect(cloud=cloud)
+
+
+
 
 def create_app_credential(
     conn,
     name: str,
     roles: Optional[List[dict]],
     description: Optional[str],
-    expires_at: Optional[str],
     expires_in: Optional[str],
+    expires_at: Optional[str],
     secret: Optional[str],
     unrestricted: bool,
     access_rules_path: Optional[str],
 ):
-    # normalize expiry preference
-    expires_in, expires_at = normalize_optional_expiry(expires_in, expires_at)
+    # Normalize expiry intent
+    norm_in, norm_at, mode = normalize_optional_expiry(expires_in, expires_at)
 
-    # translate duration into ISO8601 if provided
-    if expires_in:
-        expires_at = parse_duration_to_iso8601(expires_in)
+    # Optional breadcrumb (comment out if not desired)
+    print(f"[expiry] mode={mode} in='{norm_in}' at='{norm_at}'", file=sys.stderr)
 
+    if mode == "duration":
+        norm_at = parse_duration_to_iso8601(norm_in)
 
     access_rules = load_access_rules(access_rules_path)
 
@@ -185,12 +198,13 @@ def create_app_credential(
         user=conn.current_user_id,
         name=name,
         description=description,
-        roles=roles,
-        expires_at=expires_at,
+        roles=roles,            # e.g., [{"name": "member"}]
+        expires_at=norm_at,     # None => no expiry
         secret=secret,
         unrestricted=unrestricted,
         access_rules=access_rules,
     )
+
     return {
         "id": appcred.id,
         "name": appcred.name,
@@ -250,37 +264,37 @@ def main():
     roles_csv = os.getenv("APP_CRED_ROLES", "")
     roles = [{"name": r.strip()} for r in roles_csv.split(",") if r.strip()] or None
     desc = os.getenv("APP_CRED_DESCRIPTION") or None
-    
+    expires_at = os.getenv("APP_CRED_EXPIRES_AT") or None
+    expires_in = os.getenv("APP_CRED_EXPIRES_IN") or None
     secret = os.getenv("APP_CRED_SECRET") or None
     unrestricted = parse_bool(os.getenv("APP_CRED_UNRESTRICTED", "false"))
     access_rules_path = os.getenv("ACCESS_RULES_PATH") or None
-    expires_at = os.getenv("APP_CRED_EXPIRES_AT") or None
-    expires_in = os.getenv("APP_CRED_EXPIRES_IN") or None
 
     secret_name = os.getenv("OUTPUT_SECRET_NAME", "openstack-appcred")
     ns = os.getenv("OUTPUT_SECRET_NAMESPACE") or os.getenv("POD_NAMESPACE", "default")
 
-    conn = connect_openstack(cloud)
-    result = create_app_credential(
-        conn,
-        name=name,
-        roles=roles,
-        description=desc,
-        expires_at=expires_at,
-        expires_in=expires_in,
-        secret=secret,
-        unrestricted=unrestricted,
-        access_rules_path=access_rules_path,
-    )
-    # Never print the secret to stdout in cluster logs; only write it to the k8s Secret.
-    safe_result = {k: v for k, v in result.items() if k != "secret"}
-    print(json.dumps({**safe_result, "message": "Stored in Kubernetes Secret."}, indent=2))
-    upsert_secret(ns, secret_name, result)
-
-
-if __name__ == "__main__":
     try:
-        main()
+        conn = connect_openstack(cloud)
+        result = create_app_credential(
+            conn,
+            name=name,
+            roles=roles,
+            description=desc,
+            expires_in=expires_in,
+            expires_at=expires_at,
+            secret=secret,
+            unrestricted=unrestricted,
+            access_rules_path=access_rules_path,
+        )
+
+        # Never print the secret to stdout in cluster logs; only write it to the k8s Secret.
+        safe_result = {k: v for k, v in result.items() if k != "secret"}
+        print(json.dumps({**safe_result, "message": "Stored in Kubernetes Secret."}, indent=2))
+        upsert_secret(ns, secret_name, result)
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
