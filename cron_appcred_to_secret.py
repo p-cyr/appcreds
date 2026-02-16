@@ -1,4 +1,33 @@
 #!/usr/bin/env python3
+"""
+Create an OpenStack Application Credential from a clouds.yaml cloud and
+store the result (id + secret + metadata) in a Kubernetes Secret.
+
+Enhancements:
+- APP_CRED_NO_EXPIRY=true will ignore APP_CRED_EXPIRES_AT / APP_CRED_EXPIRES_IN
+  and create a non-expiring application credential.
+
+Environment variables:
+  OS_CLOUD                    # cloud name from clouds.yaml
+  APP_CRED_NAME              # e.g., cicd-token
+  APP_CRED_ROLES             # CSV, e.g., member,reader
+  APP_CRED_DESCRIPTION       # optional
+  APP_CRED_EXPIRES_AT        # optional, ISO8601 UTC e.g. 2026-06-01T00:00:00Z
+  APP_CRED_EXPIRES_IN        # optional, e.g., 90d, 24h, 30m, 7d12h
+  APP_CRED_NO_EXPIRY         # optional, true|false; if true => no expiry
+  APP_CRED_SECRET            # optional, supply your own secret (otherwise server generates)
+  APP_CRED_UNRESTRICTED      # optional, true|false; defaults false
+  ACCESS_RULES_PATH          # optional, path to JSON/YAML list of access rules
+
+  OUTPUT_SECRET_NAME         # k8s Secret name to create/patch
+  OUTPUT_SECRET_NAMESPACE    # k8s namespace for Secret; defaults to POD_NAMESPACE
+  POD_NAMESPACE              # usually injected via fieldRef
+
+Mounts:
+  /etc/openstack/clouds.yaml # clouds.yaml with the selected OS_CLOUD
+  (optional) custom CA via REQUESTS_CA_BUNDLE or verify in clouds.yaml if needed
+"""
+
 import os, sys, json, argparse, datetime as dt
 from typing import Optional, List
 
@@ -88,10 +117,22 @@ def create_app_credential(
     unrestricted: bool,
     access_rules_path: Optional[str],
 ):
-    if expires_at and expires_in:
-        raise ValueError("Use only one of APP_CRED_EXPIRES_AT or APP_CRED_EXPIRES_IN.")
-    if expires_in:
-        expires_at = parse_duration_to_iso8601(expires_in)
+
+    """
+    Create an application credential. If no_expiry is True, expires_* are ignored.
+    """
+    if no_expiry:
+        expires_at = None
+        expires_in = None
+    else:
+        # Normal validation
+        if expires_at and expires_in:
+            raise ValueError("Use only one of APP_CRED_EXPIRES_AT or APP_CRED_EXPIRES_IN.")
+        if expires_in:
+            expires_at = parse_duration_to_iso8601(expires_in)
+        # Empty strings -> treat as None
+        if expires_at and not expires_at.strip():
+            expires_at = None
 
     access_rules = load_access_rules(access_rules_path)
 
@@ -165,8 +206,16 @@ def main():
     roles_csv = os.getenv("APP_CRED_ROLES", "")
     roles = [{"name": r.strip()} for r in roles_csv.split(",") if r.strip()] or None
     desc = os.getenv("APP_CRED_DESCRIPTION") or None
-    expires_at = os.getenv("APP_CRED_EXPIRES_AT") or None
-    expires_in = os.getenv("APP_CRED_EXPIRES_IN") or None
+    """
+    Create an application credential. If no_expiry is True, expires_* are ignored.
+    """
+    if no_expiry:
+        expires_at = None
+        expires_in = None
+    else:
+        expires_at = os.getenv("APP_CRED_EXPIRES_AT") or None
+        expires_in = os.getenv("APP_CRED_EXPIRES_IN") or None
+    fi
     secret = os.getenv("APP_CRED_SECRET") or None
     unrestricted = parse_bool(os.getenv("APP_CRED_UNRESTRICTED", "false"))
     access_rules_path = os.getenv("ACCESS_RULES_PATH") or None
