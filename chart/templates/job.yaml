@@ -45,7 +45,9 @@ spec:
             - name: APP_CRED_ROLES
               value: "{{ .Values.appCred.roles }}"
             - name: APP_CRED_EXPIRES_IN
-              value: "{{ .Values.appCred.expiry }}"
+              value: "{{ .Values.appCred.expires_in }}"
+            - name: APP_CRED_EXPIRES_AT
+              value: "{{ .Values.appCred.expires_at }}"
             - name: APP_CRED_DESCRIPTION
               value: "{{ .Values.appCred.description }}"
             - name: APP_CRED_UNRESTRICTED
