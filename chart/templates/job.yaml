@@ -24,8 +24,7 @@ spec:
 
       containers:
         - name: writer
-          image: "{{ .Values.image.repository }}"
-          tag: "{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: IfNotPresent
 
           # ---------- Container-level securityContext ----------
