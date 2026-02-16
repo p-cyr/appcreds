@@ -28,7 +28,7 @@ Mounts:
   (optional) custom CA via REQUESTS_CA_BUNDLE or verify in clouds.yaml if needed
 """
 
-import os, sys, json, argparse, datetime as dt
+import re, os, sys, json, argparse, datetime as dt
 from typing import Optional, List
 
 # OpenStack SDK
@@ -51,6 +51,21 @@ try:
 except ImportError:
     print("Missing kubernetes client. pip install kubernetes", file=sys.stderr)
     sys.exit(1)
+
+NO_EXPIRY_TOKENS = {"none", "null", "false", "disabled", "off", "n/a", "never"}
+DURATION_RE = re.compile(r"^(?=.{2,50}$)(\d+[dhm])+$", re.IGNORECASE)
+# Examples: 90d, 12h, 30m, 7d12h, 10m30m (weird but acceptable). Adjust as you like.
+
+def is_no_expiry(val: Optional[str]) -> bool:
+    if val is None:
+        return True  # treat unset as "no expiry"
+    s = str(val).strip().lower()
+    return (not s) or (s in NO_EXPIRY_TOKENS)
+
+def is_duration(val: Optional[str]) -> bool:
+    if not val:
+        return False
+    return bool(DURATION_RE.match(val.strip()))
 
 
 def parse_bool(v: Optional[str]) -> bool:
@@ -107,28 +122,42 @@ def connect_openstack(cloud: Optional[str]):
 
 def normalize_optional_expiry(env_expires_in: Optional[str], env_expires_at: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """
-    Normalize expiry inputs:
+    Return (norm_in, norm_at, mode) where:
+      - norm_in: duration string or None
+      - norm_at: ISO string or None (we don't validate ISO format here)
+      - mode: one of {"none","duration","absolute"}
 
-    - If env var is unset/empty or equals 'none'/'null'/'false' (case-insensitive), treat as None.
-    - If BOTH are set (and not 'none'), that's invalid.
-    - Return (expires_in, expires_at) where each is either a normalized string or None.
+    Rules:
+      - Unset/empty or tokens in NO_EXPIRY_TOKENS => no expiry.
+      - If both are set to meaningful values, raise.
+      - Only pass a value to the duration parser if it matches DURATION_RE.
     """
-    def to_none_if_disabled(val: Optional[str]) -> Optional[str]:
-        if val is None:
-            return None
-        s = str(val).strip()
-        if not s:
-            return None
-        if s.lower() in ("none", "null", "false"):
-            return None
-        return s
+    si = (env_expires_in or "").strip()
+    sa = (env_expires_at or "").strip()
 
-    norm_in = to_none_if_disabled(env_expires_in)
-    norm_at = to_none_if_disabled(env_expires_at)
+    # Decide each side independently
+    in_none = is_no_expiry(si)
+    at_none = is_no_expiry(sa)
 
-    if norm_in and norm_at:
+    # If both sides present (and not interpreted as "no expiry"), it's a conflict
+    if not in_none and not at_none:
         raise ValueError("Use only one of APP_CRED_EXPIRES_IN or APP_CRED_EXPIRES_AT, not both.")
-    return norm_in, norm_at
+
+    # Prefer absolute if provided and not “no expiry”
+    if not at_none:
+        return (None, sa, "absolute")
+
+    # Else look at duration
+    if not in_none:
+        if is_duration(si):
+            return (si, None, "duration")
+        # At this point, user passed a non-duration string (e.g., 'none', 'n/a', '90x')
+        raise ValueError(f"Invalid APP_CRED_EXPIRES_IN='{env_expires_in}'. "
+                         f"Expected something like '90d', '12h', '30m', or combos like '7d12h'.")
+
+    # No expiry
+    return (None, None, "none")
+
 
 def create_app_credential(
     conn,
