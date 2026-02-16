@@ -29,6 +29,7 @@ Environment
   APP_CRED_SECRET             -> optional custom secret (server generates if omitted)
   APP_CRED_UNRESTRICTED       -> "true"/"false" (default false)
   ACCESS_RULES_PATH           -> optional JSON or YAML file with access rules list
+  APP_CRED_IF_EXISTS          -> "fail" (default) | "skip" | "replace"
 
   OUTPUT_SECRET_NAME          -> target Kubernetes Secret name (default: "openstack-appcred")
   OUTPUT_SECRET_NAMESPACE     -> defaults to POD_NAMESPACE (or "default" if not set)
@@ -169,7 +170,54 @@ def connect_openstack(cloud: Optional[str]):
     return openstack.connect(cloud=cloud)
 
 
+# -------------------------
+# Discovery / Delete helpers
+# -------------------------
 
+def list_app_creds_for_user(conn):
+    """List app creds for the current user; be explicit with user param; fallback if needed."""
+    try:
+        return list(conn.identity.application_credentials(user=conn.current_user_id))
+    except TypeError:
+        return list(conn.identity.application_credentials())
+
+def find_existing_app_credential(conn, name: str):
+    """
+    Return an existing application credential (resource) that matches the given name
+    for the current user (and, if available, same project_id), or None if not found.
+    """
+    project_id = getattr(conn, "current_project_id", None)
+    for ac in list_app_creds_for_user(conn):
+        try:
+            same_name = (ac.name == name)
+            same_proj = (project_id is None) or (getattr(ac, "project_id", None) == project_id)
+            if same_name and same_proj:
+                return ac
+        except Exception:
+            # Be tolerant if resource object lacks some attrs
+            if ac.name == name:
+                return ac
+    return None
+
+def delete_app_credential(conn, appcred):
+    """
+    Robust delete across SDK variants.
+    """
+    try:
+        conn.identity.delete_application_credential(
+            application_credential=appcred,
+            user=conn.current_user_id,
+            ignore_missing=False,
+        )
+    except TypeError:
+        try:
+            conn.identity.delete_application_credential(
+                application_credential=appcred,
+                ignore_missing=False,
+            )
+        except TypeError:
+            # positional fallback (older SDKs)
+            conn.identity.delete_application_credential(appcred, conn.current_user_id, ignore_missing=False)
 
 def create_app_credential(
     conn,
@@ -181,7 +229,34 @@ def create_app_credential(
     secret: Optional[str],
     unrestricted: bool,
     access_rules_path: Optional[str],
+     on_exists: str = "fail",
 ):
+    # Check if an app-cred with this name already exists
+    existing = find_existing_app_credential(conn, name)
+    if existing is not None:
+        msg = f"Application credential with name '{name}' already exists (id={existing.id})."
+        if on_exists == "fail":
+            raise RuntimeError(msg + " Set APP_CRED_IF_EXISTS=skip or replace if desired.")
+        elif on_exists == "skip":
+            print("[exists] " + msg + " Skipping creation.", file=sys.stderr)
+            # We cannot recover the secret; just return minimal info
+            return {
+                "id": existing.id,
+                "name": existing.name,
+                "description": getattr(existing, "description", None),
+                "project_id": getattr(existing, "project_id", None),
+                "user_id": getattr(existing, "user_id", None),
+                "expires_at": getattr(existing, "expires_at", None),
+                "secret": None,
+                "roles": roles,
+                "unrestricted": unrestricted,
+                "access_rules": load_access_rules(access_rules_path) if access_rules_path else [],
+            }
+        elif on_exists == "replace":
+            print("[exists] " + msg + " Replacing it (delete then create).", file=sys.stderr)
+            delete_app_credential(conn, existing)
+        else:
+            raise RuntimeError(f"Unknown APP_CRED_IF_EXISTS='{on_exists}'. Use fail|skip|replace.")
     # Normalize expiry intent
     norm_in, norm_at, mode = normalize_optional_expiry(expires_in, expires_at)
 
@@ -269,6 +344,7 @@ def main():
     secret = os.getenv("APP_CRED_SECRET") or None
     unrestricted = parse_bool(os.getenv("APP_CRED_UNRESTRICTED", "false"))
     access_rules_path = os.getenv("ACCESS_RULES_PATH") or None
+        on_exists = (os.getenv("APP_CRED_IF_EXISTS", "fail") or "fail").strip().lower()
 
     secret_name = os.getenv("OUTPUT_SECRET_NAME", "openstack-appcred")
     ns = os.getenv("OUTPUT_SECRET_NAMESPACE") or os.getenv("POD_NAMESPACE", "default")
@@ -285,6 +361,7 @@ def main():
             secret=secret,
             unrestricted=unrestricted,
             access_rules_path=access_rules_path,
+            on_exists=on_exists,
         )
 
         # Never print the secret to stdout in cluster logs; only write it to the k8s Secret.

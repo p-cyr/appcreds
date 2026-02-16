@@ -52,6 +52,8 @@ spec:
               value: "{{ .Values.appCred.description }}"
             - name: APP_CRED_UNRESTRICTED
               value: "{{ .Values.appCred.unrestricted }}"
+            - name: APP_CRED_IF_EXISTS
+              value: "{{ .Values.appCred.if_exists }}"
 
             # Secret output config
             - name: OUTPUT_SECRET_NAME

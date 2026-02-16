@@ -1,6 +1,6 @@
 image:
   repository: pjcyr/openstack-appcred
-  tag: v1.1.7
+  tag: v1.1.9
 os_cloud: 
 appCred:
   name: "cicd_test"
@@ -9,3 +9,4 @@ appCred:
   description: "my cicd_test app cred test"
   unrestricted: "false"
   cluster_name: "my_secretname"
+  if_exists: "fail"
