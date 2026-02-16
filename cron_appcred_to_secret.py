@@ -113,6 +113,7 @@ def create_app_credential(
     description: Optional[str],
     expires_at: Optional[str],
     expires_in: Optional[str],
+    no_expiry: bool,
     secret: Optional[str],
     unrestricted: bool,
     access_rules_path: Optional[str],
