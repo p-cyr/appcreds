@@ -105,6 +105,30 @@ def connect_openstack(cloud: Optional[str]):
     # openstacksdk reads /etc/openstack/clouds.yaml & OS_CLOUD automatically
     return openstack.connect(cloud=cloud)
 
+def normalize_optional_expiry(env_expires_in: Optional[str], env_expires_at: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """
+    Normalize expiry inputs:
+
+    - If env var is unset/empty or equals 'none'/'null'/'false' (case-insensitive), treat as None.
+    - If BOTH are set (and not 'none'), that's invalid.
+    - Return (expires_in, expires_at) where each is either a normalized string or None.
+    """
+    def to_none_if_disabled(val: Optional[str]) -> Optional[str]:
+        if val is None:
+            return None
+        s = str(val).strip()
+        if not s:
+            return None
+        if s.lower() in ("none", "null", "false"):
+            return None
+        return s
+
+    norm_in = to_none_if_disabled(env_expires_in)
+    norm_at = to_none_if_disabled(env_expires_at)
+
+    if norm_in and norm_at:
+        raise ValueError("Use only one of APP_CRED_EXPIRES_IN or APP_CRED_EXPIRES_AT, not both.")
+    return norm_in, norm_at
 
 def create_app_credential(
     conn,
@@ -113,27 +137,17 @@ def create_app_credential(
     description: Optional[str],
     expires_at: Optional[str],
     expires_in: Optional[str],
-    no_expiry: bool,
     secret: Optional[str],
     unrestricted: bool,
     access_rules_path: Optional[str],
 ):
+    # normalize expiry preference
+    expires_in, expires_at = normalize_optional_expiry(expires_in, expires_at)
 
-    """
-    Create an application credential. If no_expiry is True, expires_* are ignored.
-    """
-    if no_expiry:
-        expires_at = None
-        expires_in = None
-    else:
-        # Normal validation
-        if expires_at and expires_in:
-            raise ValueError("Use only one of APP_CRED_EXPIRES_AT or APP_CRED_EXPIRES_IN.")
-        if expires_in:
-            expires_at = parse_duration_to_iso8601(expires_in)
-        # Empty strings -> treat as None
-        if expires_at and not expires_at.strip():
-            expires_at = None
+    # translate duration into ISO8601 if provided
+    if expires_in:
+        expires_at = parse_duration_to_iso8601(expires_in)
+
 
     access_rules = load_access_rules(access_rules_path)
 
@@ -207,16 +221,7 @@ def main():
     roles_csv = os.getenv("APP_CRED_ROLES", "")
     roles = [{"name": r.strip()} for r in roles_csv.split(",") if r.strip()] or None
     desc = os.getenv("APP_CRED_DESCRIPTION") or None
-    """
-    Create an application credential. If no_expiry is True, expires_* are ignored.
-    """
-    if no_expiry:
-        expires_at = None
-        expires_in = None
-    else:
-        expires_at = os.getenv("APP_CRED_EXPIRES_AT") or None
-        expires_in = os.getenv("APP_CRED_EXPIRES_IN") or None
-    fi
+    
     secret = os.getenv("APP_CRED_SECRET") or None
     unrestricted = parse_bool(os.getenv("APP_CRED_UNRESTRICTED", "false"))
     access_rules_path = os.getenv("ACCESS_RULES_PATH") or None
