@@ -488,7 +488,7 @@ def main():
         print(json.dumps({**safe, "message": "Created app-cred and wrote clouds.yaml to Secret."}, indent=2))
 
         # Upsert Secret with clouds.yaml (+ optional custom CA) and metadata JSON keys
-        upsert_secret_with_clouds(namespace, secret_name, result, clouds_yaml_text, ca_pem)
+        upsert_secret_with_clouds(ns, secret_name, result, clouds_yaml_text, ca_pem)
 
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
