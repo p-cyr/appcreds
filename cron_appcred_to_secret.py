@@ -344,7 +344,7 @@ def main():
     secret = os.getenv("APP_CRED_SECRET") or None
     unrestricted = parse_bool(os.getenv("APP_CRED_UNRESTRICTED", "false"))
     access_rules_path = os.getenv("ACCESS_RULES_PATH") or None
-        on_exists = (os.getenv("APP_CRED_IF_EXISTS", "fail") or "fail").strip().lower()
+    on_exists = (os.getenv("APP_CRED_IF_EXISTS", "fail") or "fail").strip().lower()
 
     secret_name = os.getenv("OUTPUT_SECRET_NAME", "openstack-appcred")
     ns = os.getenv("OUTPUT_SECRET_NAMESPACE") or os.getenv("POD_NAMESPACE", "default")
