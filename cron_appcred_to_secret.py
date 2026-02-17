@@ -229,7 +229,7 @@ def resolve_clouds_entry_name() -> str:
             or os.getenv("OS_CLOUD")
             or "mycloud").strip()
 
-def read_custom_ca_if_requested() -> Tuple[Optional[str], Optional[str]]:
+def read_custom_ca_if_requested() -> tuple[Optional[str], Optional[str]]:
     """
     If CLOUDS_INCLUDE_CA=true and CLOUDS_CA_FILE points to a readable PEM,
     return (pem_text, verify_path) where verify_path is CLOUDS_VERIFY_PATH (or CA file path).
