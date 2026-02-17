@@ -3,7 +3,6 @@ name: publish
 
 on:
   push:
-    branches: [ "main" ]   # optional
     tags:     [ "v*" ]     # <-- build when a tag starting with "v" is pushed
   workflow_dispatch:
 
