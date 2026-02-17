@@ -219,6 +219,83 @@ def delete_app_credential(conn, appcred):
             # positional fallback (older SDKs)
             conn.identity.delete_application_credential(appcred, conn.current_user_id, ignore_missing=False)
 
+# -------------------------
+# clouds.yaml generation
+# -------------------------
+
+def resolve_clouds_entry_name() -> str:
+    # Prefer explicit entry name; else reuse OS_CLOUD; else 'mycloud'
+    return (os.getenv("CLOUDS_ENTRY_NAME")
+            or os.getenv("OS_CLOUD")
+            or "mycloud").strip()
+
+def read_custom_ca_if_requested() -> Tuple[Optional[str], Optional[str]]:
+    """
+    If CLOUDS_INCLUDE_CA=true and CLOUDS_CA_FILE points to a readable PEM,
+    return (pem_text, verify_path) where verify_path is CLOUDS_VERIFY_PATH (or CA file path).
+    """
+    if not parse_bool(os.getenv("CLOUDS_INCLUDE_CA", "false")):
+        return (None, None)
+    ca_path = os.getenv("CLOUDS_CA_FILE")
+    if not ca_path:
+        raise RuntimeError("CLOUDS_INCLUDE_CA=true but CLOUDS_CA_FILE is not set")
+    try:
+        with open(ca_path, "r", encoding="utf-8") as f:
+            pem = f.read()
+        verify_path = os.getenv("CLOUDS_VERIFY_PATH", ca_path)
+        return (pem, verify_path)
+    except Exception as e:
+        raise RuntimeError(f"Failed to read CA from '{ca_path}': {e}")
+
+def build_clouds_yaml_text(auth_url: str,
+                           appcred_id: str,
+                           appcred_secret: str,
+                           entry_name: str,
+                           region_name: Optional[str],
+                           interface: Optional[str],
+                           verify_path: Optional[str]) -> str:
+    """
+    Build a valid clouds.yaml with a single entry using v3applicationcredential auth.
+    Use PyYAML if available; else compose minimal YAML text safely.
+    """
+    clouds_obj = {
+        "clouds": {
+            entry_name: {
+                "auth_type": "v3applicationcredential",
+                "auth": {
+                    "auth_url": auth_url,
+                    "application_credential_id": appcred_id,
+                    "application_credential_secret": str(appcred_secret),
+                }
+            }
+        }
+    }
+    if region_name:
+        clouds_obj["clouds"][entry_name]["region_name"] = region_name
+    if interface:
+        clouds_obj["clouds"][entry_name]["interface"] = interface
+    if verify_path:
+        clouds_obj["clouds"][entry_name]["verify"] = verify_path
+
+    if HAS_YAML:
+        return yaml.safe_dump(clouds_obj, sort_keys=False)
+    # Fallback: manual YAML (simple and safe for this shape)
+    lines = []
+    lines.append("clouds:")
+    lines.append(f"  {entry_name}:")
+    lines.append(f"    auth_type: v3applicationcredential")
+    lines.append(f"    auth:")
+    lines.append(f"      auth_url: {auth_url}")
+    lines.append(f"      application_credential_id: {appcred_id}")
+    lines.append(f"      application_credential_secret: \"{appcred_secret}\"")
+    if region_name:
+        lines.append(f"    region_name: {region_name}")
+    if interface:
+        lines.append(f"    interface: {interface}")
+    if verify_path:
+        lines.append(f"    verify: {verify_path}")
+    return "\n".join(lines) + "\n"
+
 def create_app_credential(
     conn,
     name: str,
@@ -251,6 +328,7 @@ def create_app_credential(
                 "roles": roles,
                 "unrestricted": unrestricted,
                 "access_rules": load_access_rules(access_rules_path) if access_rules_path else [],
+                "_skip_secret_update": True,  # sentinel for caller
             }
         elif on_exists == "replace":
             print("[exists] " + msg + " Replacing it (delete then create).", file=sys.stderr)
@@ -291,33 +369,47 @@ def create_app_credential(
         "roles": roles,
         "unrestricted": unrestricted,
         "access_rules": access_rules,
+        "_skip_secret_update": False,
     }
 
 
-def upsert_secret(namespace: str, secret_name: str, payload: dict):
+def upsert_secret_with_clouds(namespace: str,
+                              secret_name: str,
+                              payload: dict,
+                              clouds_yaml_text: Optional[str],
+                              ca_pem: Optional[str]):
     """
-    Upsert a Secret using stringData to avoid manual base64.
+    Upsert Secret using stringData with:
+      - clouds.yaml (if provided),
+      - custom-ca.pem (if provided),
+      - and metadata JSON keys for convenience.
     """
-    k8s_config.load_incluster_config()  # use Pod's SA token & CA; recommended in-cluster.  # noqa
+    k8s_config.load_incluster_config()
     api = k8s.CoreV1Api()
-    md = k8s.V1ObjectMeta(name=secret_name, namespace=namespace)
+
+    string_data = {
+        # Metadata / convenience
+        "id": payload.get("id") or "",
+        "name": payload.get("name") or "",
+        "secret": payload.get("secret") or "",
+        "project_id": payload.get("project_id") or "",
+        "user_id": payload.get("user_id") or "",
+        "expires_at": payload.get("expires_at") or "",
+        "unrestricted": str(payload.get("unrestricted", False)).lower(),
+        "roles.json": json.dumps(payload.get("roles") or []),
+        "access_rules.json": json.dumps(payload.get("access_rules") or []),
+    }
+    if clouds_yaml_text:
+        string_data["clouds.yaml"] = clouds_yaml_text
+    if ca_pem:
+        string_data["custom-ca.pem"] = ca_pem
+
     body = k8s.V1Secret(
         api_version="v1",
         kind="Secret",
-        metadata=md,
+        metadata=k8s.V1ObjectMeta(name=secret_name, namespace=namespace),
         type="Opaque",
-        string_data={
-            "id": payload.get("id") or "",
-            "name": payload.get("name") or "",
-            "secret": payload.get("secret") or "",
-            "project_id": payload.get("project_id") or "",
-            "user_id": payload.get("user_id") or "",
-            "expires_at": payload.get("expires_at") or "",
-            "unrestricted": str(payload.get("unrestricted", False)).lower(),
-            # store structured bits as JSON strings:
-            "roles.json": json.dumps(payload.get("roles") or []),
-            "access_rules.json": json.dumps(payload.get("access_rules") or []),
-        },
+        string_data=string_data,
     )
     try:
         api.read_namespaced_secret(secret_name, namespace)
@@ -349,6 +441,12 @@ def main():
     secret_name = os.getenv("OUTPUT_SECRET_NAME", "openstack-appcred")
     ns = os.getenv("OUTPUT_SECRET_NAMESPACE") or os.getenv("POD_NAMESPACE", "default")
 
+        # clouds.yaml entry parameters
+    clouds_entry_name = resolve_clouds_entry_name()
+    region_override = os.getenv("CLOUDS_REGION_NAME")
+    interface_override = os.getenv("CLOUDS_INTERFACE")
+    ca_pem, verify_path = read_custom_ca_if_requested()
+
     try:
         conn = connect_openstack(cloud)
         result = create_app_credential(
@@ -365,9 +463,33 @@ def main():
         )
 
         # Never print the secret to stdout in cluster logs; only write it to the k8s Secret.
-        safe_result = {k: v for k, v in result.items() if k != "secret"}
-        print(json.dumps({**safe_result, "message": "Stored in Kubernetes Secret."}, indent=2))
-        upsert_secret(ns, secret_name, result)
+        if result.get("_skip_secret_update"):
+            safe = {k: v for k, v in result.items() if k not in ("secret", "_skip_secret_update")}
+            print(json.dumps({**safe, "message": "Existing app-cred found; skipped creation and Secret update."}, indent=2))
+            sys.exit(0)
+
+        # Build clouds.yaml using connection config + new credential
+        auth_url = conn.config.auth["auth_url"]
+        region_name = region_override or getattr(conn.config, "region_name", None)
+        interface = interface_override or getattr(conn.config, "interface", None)
+
+        clouds_yaml_text = build_clouds_yaml_text(
+            auth_url=auth_url,
+            appcred_id=result["id"],
+            appcred_secret=result["secret"],
+            entry_name=clouds_entry_name,
+            region_name=region_name,
+            interface=interface,
+            verify_path=verify_path,
+        )
+
+        # Log safe summary (do not print secret)
+        safe = {k: v for k, v in result.items() if k not in ("secret", "_skip_secret_update")}
+        print(json.dumps({**safe, "message": "Created app-cred and wrote clouds.yaml to Secret."}, indent=2))
+
+        # Upsert Secret with clouds.yaml (+ optional custom CA) and metadata JSON keys
+        upsert_secret_with_clouds(namespace, secret_name, result, clouds_yaml_text, ca_pem)
+
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(2)
