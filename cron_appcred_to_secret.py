@@ -279,7 +279,6 @@ def build_clouds_yaml_text(auth_url: str,
         clouds_obj["clouds"][entry_name]["verify"] = verify_path
     if cacert:
         clouds_obj["clouds"][entry_name]["cacert"] = cacert
-        clouds_obj["clouds"][entry_name]["tls-insecure"] = true
 
     if HAS_YAML:
         return yaml.safe_dump(clouds_obj, sort_keys=False)
@@ -298,6 +297,9 @@ def build_clouds_yaml_text(auth_url: str,
         lines.append(f"    interface: {interface}")
     if verify_path:
         lines.append(f"    verify: {verify_path}")
+    if cacert:
+        lines.append(f"    cacert: {cacert}")
+        lines.append(f"    tls-insecure: true")
     return "\n".join(lines) + "\n"
 
 def create_app_credential(
