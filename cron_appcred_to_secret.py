@@ -177,9 +177,9 @@ def connect_openstack(cloud: Optional[str]):
 def list_app_creds_for_user(conn):
     """List app creds for the current user; be explicit with user param; fallback if needed."""
     try:
+        return list(conn.identity.application_credentials(user=conn.current_user_id))
+    except TypeError:
         return list(conn.identity.application_credentials())
-    except Exception as e:
-        print(f"Error listing credentials: {e}")
 
 def find_existing_app_credential(conn, name: str):
     """
@@ -457,7 +457,7 @@ def main():
 
     try:
         conn = connect_openstack(cloud)
-        cred = list_app_creds_for_user(conn)
+        creds = list_app_creds_for_user(conn)
         for cred in creds:
             print(f"{cred.id} - {cred.name} (Expires: {cred.expires_at})")
         result = create_app_credential(
