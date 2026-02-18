@@ -177,9 +177,9 @@ def connect_openstack(cloud: Optional[str]):
 def list_app_creds_for_user(conn):
     """List app creds for the current user; be explicit with user param; fallback if needed."""
     try:
-        return list(conn.identity.application_credentials(user=conn.current_user_id))
-    except TypeError:
         return list(conn.identity.application_credentials())
+    except Exception as e:
+        print(f"Error listing credentials: {e}")
 
 def find_existing_app_credential(conn, name: str):
     """
@@ -187,10 +187,11 @@ def find_existing_app_credential(conn, name: str):
     for the current user (and, if available, same project_id), or None if not found.
     """
     project_id = getattr(conn, "current_project_id", None)
-    for ac in list_app_creds_for_user(conn):
+    creds = list_app_creds_for_user(conn):
+    for ac in creds:
         try:
             same_name = (ac.name == name)
-            print(f"comparing '{ac.name}' with '{name}")
+            print(f"comparing '{ac.name}' with '{name}'")
             same_proj = (project_id is None) or (getattr(ac, "project_id", None) == project_id)
             if same_name and same_proj:
                 return ac
@@ -456,6 +457,9 @@ def main():
 
     try:
         conn = connect_openstack(cloud)
+        cred = list_app_creds_for_user(conn)
+        for cred in creds:
+            print(f"{cred.id} - {cred.name} (Expires: {cred.expires_at})")
         result = create_app_credential(
             conn,
             name=name,
