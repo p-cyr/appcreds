@@ -190,6 +190,7 @@ def find_existing_app_credential(conn, name: str):
     for ac in list_app_creds_for_user(conn):
         try:
             same_name = (ac.name == name)
+            print(f"comparing '{ac.name}' with '{name}")
             same_proj = (project_id is None) or (getattr(ac, "project_id", None) == project_id)
             if same_name and same_proj:
                 return ac
@@ -312,7 +313,7 @@ def create_app_credential(
     secret: Optional[str],
     unrestricted: bool,
     access_rules_path: Optional[str],
-     on_exists: str = "fail",
+    on_exists: Optional[str]",
 ):
     # Check if an app-cred with this name already exists
     existing = find_existing_app_credential(conn, name)
