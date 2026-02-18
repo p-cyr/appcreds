@@ -255,7 +255,6 @@ def build_clouds_yaml_text(auth_url: str,
                            entry_name: str,
                            region_name: Optional[str],
                            interface: Optional[str],
-                           cacert: Optional[str],
                            verify_path: Optional[str]) -> str:
     """
     Build a valid clouds.yaml with a single entry using v3applicationcredential auth.
@@ -279,8 +278,8 @@ def build_clouds_yaml_text(auth_url: str,
         clouds_obj["clouds"][entry_name]["interface"] = interface
     if verify_path:
         clouds_obj["clouds"][entry_name]["verify"] = verify_path
-    if cacert:
-        clouds_obj["clouds"][entry_name]["cacert"] = cacert
+    #if cacert:
+    #    clouds_obj["clouds"][entry_name]["cacert"] = cacert
 
     if HAS_YAML:
         return yaml.safe_dump(clouds_obj, sort_keys=False)
@@ -299,9 +298,9 @@ def build_clouds_yaml_text(auth_url: str,
         lines.append(f"    interface: {interface}")
     if verify_path:
         lines.append(f"    verify: {verify_path}")
-    if cacert:
-        lines.append(f"    cacert: {cacert}")
-        lines.append(f"    tls-insecure: true")
+    #if cacert:
+    #    lines.append(f"    cacert: {cacert}")
+    #    lines.append(f"    tls-insecure: true")
     return "\n".join(lines) + "\n"
 
 def create_app_credential(
@@ -453,7 +452,8 @@ def main():
     clouds_entry_name = resolve_clouds_entry_name()
     region_override = os.getenv("CLOUDS_REGION_NAME")
     interface_override = os.getenv("CLOUDS_INTERFACE")
-    ca_pem, verify_path = read_custom_ca_if_requested()
+    #ca_pem, verify_path = read_custom_ca_if_requested()
+    #cacert_override = os.getenv("APP_CRED_CA_CERT")
 
     try:
         conn = connect_openstack(cloud)
@@ -483,7 +483,7 @@ def main():
         auth_url = conn.config.auth["auth_url"]
         region_name = region_override or getattr(conn.config, "region_name", None)
         interface = interface_override or getattr(conn.config, "interface", None)
-        cacert = cacert_override or getattr(conn.config, "cacert", None)
+        #cacert = cacert_override or getattr(conn.config, "cacert", None)
 
         clouds_yaml_text = build_clouds_yaml_text(
             auth_url=auth_url,
@@ -492,7 +492,7 @@ def main():
             entry_name=clouds_entry_name,
             region_name=region_name,
             interface=interface,
-            cacert=cacert,
+        #    cacert=cacert,
             verify_path=verify_path,
         )
 
