@@ -253,6 +253,7 @@ def build_clouds_yaml_text(auth_url: str,
                            entry_name: str,
                            region_name: Optional[str],
                            interface: Optional[str],
+                           cacert: Optional[str],
                            verify_path: Optional[str]) -> str:
     """
     Build a valid clouds.yaml with a single entry using v3applicationcredential auth.
@@ -276,6 +277,9 @@ def build_clouds_yaml_text(auth_url: str,
         clouds_obj["clouds"][entry_name]["interface"] = interface
     if verify_path:
         clouds_obj["clouds"][entry_name]["verify"] = verify_path
+    if cacert:
+        clouds_obj["clouds"][entry_name]["cacert"] = cacert
+        clouds_obj["clouds"][entry_name]["tls-insecure"] = true
 
     if HAS_YAML:
         return yaml.safe_dump(clouds_obj, sort_keys=False)
@@ -472,6 +476,7 @@ def main():
         auth_url = conn.config.auth["auth_url"]
         region_name = region_override or getattr(conn.config, "region_name", None)
         interface = interface_override or getattr(conn.config, "interface", None)
+        cacert = cacert_override or getattr(conn.config, "cacert", None)
 
         clouds_yaml_text = build_clouds_yaml_text(
             auth_url=auth_url,
@@ -480,6 +485,7 @@ def main():
             entry_name=clouds_entry_name,
             region_name=region_name,
             interface=interface,
+            cacert=cacert,
             verify_path=verify_path,
         )
 
