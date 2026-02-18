@@ -187,7 +187,7 @@ def find_existing_app_credential(conn, name: str):
     for the current user (and, if available, same project_id), or None if not found.
     """
     project_id = getattr(conn, "current_project_id", None)
-    creds = list_app_creds_for_user(conn):
+    creds = list_app_creds_for_user(conn)
     for ac in creds:
         try:
             same_name = (ac.name == name)
