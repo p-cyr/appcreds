@@ -311,6 +311,7 @@ def create_app_credential(
     secret: Optional[str],
     unrestricted: bool,
     access_rules_path: Optional[str],
+    on_exists: Optional[str],
 ):
     # Check if an app-cred with this name already exists
     existing = find_existing_app_credential(conn, name)
