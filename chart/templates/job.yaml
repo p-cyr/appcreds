@@ -5,13 +5,13 @@ metadata:
   namespace: {{ .Values.appCred.cluster_name }}
 spec:
   # Auto-delete the Job (and its Pods) 10 minutes after it finishes
-  ttlSecondsAfterFinished: 600
+  ttlSecondsAfterFinished: {{ .Values.ttlSecondsAfterFinished }}
   template:
     metadata:
       name: openstack-appcred-job-{{ .Values.appCred.cluster_name }}
     spec:
       serviceAccountName: appcreds-writer
-      restartPolicy: OnFailure
+      restartPolicy: {{ .Values.restartPolicy }}
 
       securityContext:
         runAsNonRoot: true              # required by PSS:restricted

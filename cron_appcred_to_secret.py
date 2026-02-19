@@ -255,7 +255,7 @@ def build_clouds_yaml_text(auth_url: str,
                            entry_name: str,
                            region_name: Optional[str],
                            interface: Optional[str],
-                           verify_path: Optional[str]) -> str:
+                           cacert: Optional[str]) -> str:
     """
     Build a valid clouds.yaml with a single entry using v3applicationcredential auth.
     Use PyYAML if available; else compose minimal YAML text safely.
@@ -276,8 +276,8 @@ def build_clouds_yaml_text(auth_url: str,
         clouds_obj["clouds"][entry_name]["region_name"] = region_name
     if interface:
         clouds_obj["clouds"][entry_name]["interface"] = interface
-    if verify_path:
-        clouds_obj["clouds"][entry_name]["verify"] = verify_path
+    #if verify_path:
+    #    clouds_obj["clouds"][entry_name]["verify"] = verify_path
     #if cacert:
     #    clouds_obj["clouds"][entry_name]["cacert"] = cacert
 
@@ -296,11 +296,9 @@ def build_clouds_yaml_text(auth_url: str,
         lines.append(f"    region_name: {region_name}")
     if interface:
         lines.append(f"    interface: {interface}")
-    if verify_path:
-        lines.append(f"    verify: {verify_path}")
-    #if cacert:
-    #    lines.append(f"    cacert: {cacert}")
-    #    lines.append(f"    tls-insecure: true")
+    if cacert:
+        lines.append(f"    cacert: {cacert}")
+        lines.append(f"    tls-insecure: true")
     return "\n".join(lines) + "\n"
 
 def create_app_credential(
@@ -313,7 +311,6 @@ def create_app_credential(
     secret: Optional[str],
     unrestricted: bool,
     access_rules_path: Optional[str],
-    on_exists: Optional[str],
 ):
     # Check if an app-cred with this name already exists
     existing = find_existing_app_credential(conn, name)
@@ -383,8 +380,7 @@ def create_app_credential(
 def upsert_secret_with_clouds(namespace: str,
                               secret_name: str,
                               payload: dict,
-                              clouds_yaml_text: Optional[str],
-                              ca_pem: Optional[str]):
+                              clouds_yaml_text: Optional[str]):
     """
     Upsert Secret using stringData with:
       - clouds.yaml (if provided),
@@ -408,8 +404,6 @@ def upsert_secret_with_clouds(namespace: str,
     }
     if clouds_yaml_text:
         string_data["clouds.yaml"] = clouds_yaml_text
-    if ca_pem:
-        string_data["custom-ca.pem"] = ca_pem
 
     body = k8s.V1Secret(
         api_version="v1",
@@ -452,14 +446,12 @@ def main():
     clouds_entry_name = resolve_clouds_entry_name()
     region_override = os.getenv("CLOUDS_REGION_NAME")
     interface_override = os.getenv("CLOUDS_INTERFACE")
+    cacert = os.getenv("CLOUDS_CACERT")
     #ca_pem, verify_path = read_custom_ca_if_requested()
     #cacert_override = os.getenv("APP_CRED_CA_CERT")
 
     try:
         conn = connect_openstack(cloud)
-        creds = list_app_creds_for_user(conn)
-        for cred in creds:
-            print(f"{cred.id} - {cred.name} (Expires: {cred.expires_at})")
         result = create_app_credential(
             conn,
             name=name,
@@ -492,8 +484,7 @@ def main():
             entry_name=clouds_entry_name,
             region_name=region_name,
             interface=interface,
-        #    cacert=cacert,
-            verify_path=verify_path,
+            cacert=cacert,
         )
 
         # Log safe summary (do not print secret)
@@ -501,7 +492,7 @@ def main():
         print(json.dumps({**safe, "message": "Created app-cred and wrote clouds.yaml to Secret."}, indent=2))
 
         # Upsert Secret with clouds.yaml (+ optional custom CA) and metadata JSON keys
-        upsert_secret_with_clouds(ns, secret_name, result, clouds_yaml_text, ca_pem)
+        upsert_secret_with_clouds(ns, secret_name, result, clouds_yaml_text, cacert)
 
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
