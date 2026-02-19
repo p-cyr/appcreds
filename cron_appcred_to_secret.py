@@ -278,8 +278,8 @@ def build_clouds_yaml_text(auth_url: str,
         clouds_obj["clouds"][entry_name]["interface"] = interface
     #if verify_path:
     #    clouds_obj["clouds"][entry_name]["verify"] = verify_path
-    #if cacert:
-    #    clouds_obj["clouds"][entry_name]["cacert"] = cacert
+    if cacert:
+        clouds_obj["clouds"][entry_name]["cacert"] = cacert
 
     if HAS_YAML:
         return yaml.safe_dump(clouds_obj, sort_keys=False)

@@ -2,7 +2,6 @@ image:
   repository: pjcyr/openstack-appcred
   tag: v1.1.9
 restartPolicy: Never"
-ttlSecondsAfterFinished: 0
 os_cloud: "mycloud"
 appCred:
   name: "cicd_test"

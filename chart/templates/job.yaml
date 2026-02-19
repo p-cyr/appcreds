@@ -4,11 +4,10 @@ metadata:
   name: openstack-appcred-{{ .Values.appCred.cluster_name }}
   namespace: {{ .Values.appCred.cluster_name }}
 spec:
-  # Auto-delete the Job (and its Pods) 10 minutes after it finishes
-  ttlSecondsAfterFinished: {{ .Values.ttlSecondsAfterFinished }}
   template:
     metadata:
       name: openstack-appcred-job-{{ .Values.appCred.cluster_name }}
+      labels: openstack-appcred-{{ .Values.appCred.cluster_name }}
     spec:
       serviceAccountName: appcreds-writer
       restartPolicy: {{ .Values.restartPolicy }}
